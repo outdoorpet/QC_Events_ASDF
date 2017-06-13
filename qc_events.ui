@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>QC Events</string>
+   <string>QC Events ASDF</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <property name="sizePolicy">
@@ -33,16 +33,16 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="open_cat_button">
+         <widget class="QPushButton" name="open_ASDF_button">
           <property name="text">
-           <string>Open Earthquake Catalogue</string>
+           <string>Open ASDF file</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="open_xml_button">
+         <widget class="QPushButton" name="open_cat_button">
           <property name="text">
-           <string>Open StationXML</string>
+           <string>Open Earthquake Catalogue</string>
           </property>
          </widget>
         </item>
@@ -87,7 +87,7 @@
            </widget>
           </item>
           <item row="0" column="1">
-           <widget class="QWebView" name="web_view" native="true">
+           <widget class="QWebView" name="web_view">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
               <horstretch>0</horstretch>
@@ -100,7 +100,7 @@
               <height>0</height>
              </size>
             </property>
-            <property name="url" stdset="0">
+            <property name="url">
              <url>
               <string>about:blank</string>
              </url>
@@ -122,7 +122,7 @@
      <x>0</x>
      <y>0</y>
      <width>1227</width>
-     <height>22</height>
+     <height>26</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuTools">

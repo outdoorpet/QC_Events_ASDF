@@ -8,6 +8,8 @@ import shutil
 import re
 import pyqtgraph as pg
 import json
+import pyasdf
+import itertools
 
 from DateAxisItem import DateAxisItem
 
@@ -299,8 +301,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self.open_db_button.released.connect(self.open_db_file)
+        self.open_ASDF_button.released.connect(self.open_asdf_file)
         self.open_cat_button.released.connect(self.open_cat_file)
-        self.open_xml_button.released.connect(self.open_xml_file)
+        # self.open_xml_button.released.connect(self.open_xml_file)
 
         self.action_upd_xml_sql.triggered.connect(self.upd_xml_sql)
         self.action_get_gaps_sql.triggered.connect(self.get_gaps_sql)
@@ -344,37 +347,62 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
     def open_db_file(self):
         self.db_filename = str(QtGui.QFileDialog.getOpenFileName(
-            parent=self, caption="Choose SQLite Database File",
+            parent=self, caption="Choose JSON Database File",
             directory=os.path.expanduser("~"),
-            filter="Database Files (*.db *.json)"))
+            filter="JSON Database File (*.json)"))
         if not self.db_filename:
             return
 
         print('')
         print("Initializing Metadata Database..")
 
-        if os.path.splitext(self.db_filename)[1] == ".db":
+        with open(self.db_filename, 'r') as f:
 
-            # Open and create the SQL file
-            # Create an engine that stores data
-            self.engine = create_engine('sqlite:////' + self.db_filename)
+            # json_load = json.load(f)
+            self.network_dict = json.load(f)
 
-            # Initiate a session with the SQL database so that we can add data to it
-            self.Session = sessionmaker(bind=self.engine)
-            self.session = self.Session()
+        print("JSON --> Dictionary Load Done!")
 
-            print("SQLite Initializing Done!")
+            # self.network_dict = json.loads(json_load)
 
-        elif os.path.splitext(self.db_filename)[1] == ".json":
+    def open_asdf_file(self):
+        self.asdf_filename = str(QtGui.QFileDialog.getOpenFileName(
+            parent=self, caption="Choose ASDF File",
+            directory=os.path.expanduser("~"),
+            filter="ASDF Files (*.h5)"))
+        if not self.asdf_filename:
+            return
 
-            with open(self.db_filename, 'r') as f:
+        # open up the asdf file containing all of the waveforms for a network
+        self.waveform_ds = pyasdf.ASDFDataSet(self.asdf_filename)
 
-                # json_load = json.load(f)
-                self.network_dict = json.load(f)
+        self.plot_stations()
 
-            print("JSON --> Dictionary Load Done!")
+        self.build_station_view_list()
 
-                # self.network_dict = json.loads(json_load)
+    def plot_stations(self):
+        # save all of the coords for
+        temp_x_coords = []
+        temp_y_coords = []
+
+        # iterate through the stations with the coords
+        for station_id, coordinates in self.waveform_ds.get_all_coordinates().items():
+            if not coordinates:
+                continue
+
+            latitude = coordinates["latitude"]
+            longitude = coordinates["longitude"]
+
+            # append the lats and lons to temp lists
+            temp_x_coords.append(longitude)
+            temp_y_coords.append(latitude)
+
+            js_call = "addStation('{station_id}', {latitude}, {longitude});" \
+                .format(station_id=station_id, latitude=latitude,
+                        longitude=longitude)
+            self.web_view.page().mainFrame().evaluateJavaScript(js_call)
+
+        self.station_coords = (temp_x_coords, temp_y_coords)
 
     def open_cat_file(self):
         self.cat_filename = str(QtGui.QFileDialog.getOpenFileName(
@@ -412,92 +440,111 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.build_tables()
         self.plot_events()
 
-    def open_xml_file(self):
-        self.stn_filename = str(QtGui.QFileDialog.getOpenFileName(
-            parent=self, caption="Choose StationXML Metadata File",
-            directory=os.path.expanduser("~"),
-            filter="XML Files (*.xml)"))
-        if not self.stn_filename:
-            return
-
-        self.inv = read_inventory(self.stn_filename)
-
-        print('')
-        print(self.inv)
-
-        self.channel_codes = []
-        # get the channel names for dataset
-        for _j, chan in enumerate(self.inv[0][0]):
-            self.channel_codes.append(self.inv[0][0][_j].code)
-
-        self.plot_inv()
-
-        self.build_station_view_list()
+    # def open_xml_file(self):
+    #     self.stn_filename = str(QtGui.QFileDialog.getOpenFileName(
+    #         parent=self, caption="Choose StationXML Metadata File",
+    #         directory=os.path.expanduser("~"),
+    #         filter="XML Files (*.xml)"))
+    #     if not self.stn_filename:
+    #         return
+    #
+    #     self.inv = read_inventory(self.stn_filename)
+    #
+    #     print('')
+    #     print(self.inv)
+    #
+    #     self.channel_codes = []
+    #     # get the channel names for dataset
+    #     for _j, chan in enumerate(self.inv[0][0]):
+    #         self.channel_codes.append(self.inv[0][0][_j].code)
+    #
+    #     self.plot_inv()
+    #
+    #     self.build_station_view_list()
 
     def build_station_view_list(self):
         self.station_view.clear()
 
         items = []
 
-        network_item = QtGui.QTreeWidgetItem(
-            [self.inv[0].code], type=STATION_VIEW_ITEM_TYPES["NETWORK"])
+        # persistent list for all stations within ASDF file
+        self.station_list = []
+        #set with unique channel codes in survey
+        channel_codes_set = set()
 
-        # Add all children stations.
-        self.station_list = []  # pyqt QtreeWidget items
+        # Iterate through station accessors in ASDF file
+        for key, group in itertools.groupby(
+                self.waveform_ds.waveforms,
+                key=lambda x: x._station_name.split(".")[0]):
+            network_item = QtGui.QTreeWidgetItem(
+                [key],
+                type=STATION_VIEW_ITEM_TYPES["NETWORK"])
+            group = sorted(group, key=lambda x: x._station_name)
+            # Add all children stations.
+            for station in sorted(group, key=lambda x: x._station_name):
+                station_item = QtGui.QTreeWidgetItem([
+                    station._station_name.split(".")[-1]],
+                    type=STATION_VIEW_ITEM_TYPES["STATION"])
 
-        for i, station in enumerate(self.inv[0]):
-            station_children = []  # pyqt QtreeWidget items
-            self.station_list.append(str(station.code))
-            station_item = QtGui.QTreeWidgetItem(
-                [station.code], type=STATION_VIEW_ITEM_TYPES["STATION"])
+                self.station_list.append(station._station_name)
 
-            # add info children
-            station_children = [
-                QtGui.QTreeWidgetItem(['StartDate: \t%s' % station.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
-                                      type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                QtGui.QTreeWidgetItem(['EndDate: \t%s' % station.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
-                                      type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                QtGui.QTreeWidgetItem(['Latitude: \t%s' % station.latitude], type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                QtGui.QTreeWidgetItem(['Longitude: \t%s' % station.longitude],
-                                      type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                QtGui.QTreeWidgetItem(['Elevation: \t%s' % station.elevation],
-                                      type=STATION_VIEW_ITEM_TYPES["STN_INFO"])]
+                # get stationxml (to channel level) for station
+                station_inv = station.StationXML[0][0]
 
-            station_item.addChildren(station_children)
+                # add info children
+                station_children = [
+                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                                          type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
+                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                                          type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
+                    QtGui.QTreeWidgetItem(['Latitude: \t%s' % station_inv.latitude], type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
+                    QtGui.QTreeWidgetItem(['Longitude: \t%s' % station_inv.longitude],
+                                          type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
+                    QtGui.QTreeWidgetItem(['Elevation: \t%s' % station_inv.elevation],
+                                          type=STATION_VIEW_ITEM_TYPES["STN_INFO"])]
 
-            # add channel items
-            for channel in station:
-                channel_item = QtGui.QTreeWidgetItem(
-                    [channel.code], type=STATION_VIEW_ITEM_TYPES["CHANNEL"])
+                station_item.addChildren(station_children)
 
-                channel_children = [
-                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Location: \t%s' % channel.location_code],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['SamplRate: \t%s' % channel.sample_rate],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Azimuth: \t%s' % channel.azimuth],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Dip: \t%s' % channel.dip], type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Latitude: \t%s' % channel.latitude],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Longitude: \t%s' % channel.longitude],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                    QtGui.QTreeWidgetItem(['Elevation: \t%s' % channel.elevation],
-                                          type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"])]
+                # add channel items
+                for channel_inv in station_inv:
+                    #add the channel code to list
+                    channel_codes_set.add(channel_inv.code)
 
-                channel_item.addChildren(channel_children)
+                    channel_item = QtGui.QTreeWidgetItem(
+                        [channel_inv.code], type=STATION_VIEW_ITEM_TYPES["CHANNEL"])
 
-                station_item.addChild(channel_item)
+                    channel_children = [
+                        QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Location: \t%s' % channel_inv.location_code],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['SamplRate: \t%s' % channel_inv.sample_rate],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Azimuth: \t%s' % channel_inv.azimuth],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Dip: \t%s' % channel_inv.dip], type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Latitude: \t%s' % channel_inv.latitude],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Longitude: \t%s' % channel_inv.longitude],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
+                        QtGui.QTreeWidgetItem(['Elevation: \t%s' % channel_inv.elevation],
+                                              type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"])]
 
-            network_item.addChild(station_item)
+                    channel_item.addChildren(channel_children)
+
+                    station_item.addChild(channel_item)
+
+                network_item.addChild(station_item)
 
         items.append(network_item)
 
         self.station_view.insertTopLevelItems(0, items)
+
+        # make the channel code set into list and make persistant
+        self.channel_codes = list(channel_codes_set)
+
 
     def station_view_itemClicked(self, item):
         t = item.type()
@@ -609,21 +656,21 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                         p_color="#008000")
             self.web_view.page().mainFrame().evaluateJavaScript(js_call)
 
-    def plot_inv(self):
-        # plot the stations
-        temp_x_coords = []
-        temp_y_coords = []
-        for i, station in enumerate(self.inv[0]):
-            # append the lats and lons to temp lists
-            temp_x_coords.append(station.longitude)
-            temp_y_coords.append(station.latitude)
-
-            js_call = "addStation('{station_id}', {latitude}, {longitude});" \
-                .format(station_id=station.code, latitude=station.latitude,
-                        longitude=station.longitude)
-            self.web_view.page().mainFrame().evaluateJavaScript(js_call)
-
-        self.station_coords = (temp_x_coords, temp_y_coords)
+    # def plot_inv(self):
+    #     # plot the stations
+    #     temp_x_coords = []
+    #     temp_y_coords = []
+    #     for i, station in enumerate(self.inv[0]):
+    #         # append the lats and lons to temp lists
+    #         temp_x_coords.append(station.longitude)
+    #         temp_y_coords.append(station.latitude)
+    #
+    #         js_call = "addStation('{station_id}', {latitude}, {longitude});" \
+    #             .format(station_id=station.code, latitude=station.latitude,
+    #                     longitude=station.longitude)
+    #         self.web_view.page().mainFrame().evaluateJavaScript(js_call)
+    #
+    #     self.station_coords = (temp_x_coords, temp_y_coords)
 
     def create_SG2K_initiate(self, event, quake_df):
 
@@ -631,19 +678,22 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         sel_dlg = selectionDialog(parent=self, sta_list=self.station_list, chan_list=self.channel_codes)
         if sel_dlg.exec_():
             select_sta, select_comp = sel_dlg.getSelected()
+            print(select_sta)
 
-            # specify output directory for miniSEED files
-            temp_seed_out = os.path.join(os.path.dirname(self.cat_filename), event)
+            # specify output directory for ASDF file for earthquake
+            temp_asdf_out = os.path.join(os.path.dirname(self.cat_filename), event + '.h5')
 
             # create directory
-            if os.path.exists(temp_seed_out):
-                shutil.rmtree(temp_seed_out)
-            os.mkdir(temp_seed_out)
+            if os.path.exists(temp_asdf_out):
+                shutil.rmtree(temp_asdf_out)
+            os.mkdir(temp_asdf_out)
 
-            query_time = UTCDateTime(quake_df['qtime'] - (10 * 60)).timestamp
+            # earthquake time for json query
+            quake_time = UTCDateTime(quake_df['qtime']).timestamp
 
-            trace_starttime = UTCDateTime(quake_df['qtime'] - (5 * 60))
-            trace_endtime = UTCDateTime(quake_df['qtime'] + (15 * 60))
+            # query for data 5 minutes before earthquake and 15 minutes after
+            qu_starttime = quake_time - (5 * 60)
+            qu_endtime = quake_time + (15 * 60)
 
             # Create a Stream object to put data into
             # st = Stream()
@@ -653,32 +703,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             print('---------------------------------------')
             print('Finding Data for Earthquake: ' + event)
 
-            if os.path.splitext(self.db_filename)[1] == ".db":
-                # run SQL query
-                for matched_entry in self.session.query(Waveforms). \
-                        filter(or_(and_(Waveforms.starttime <= query_time, query_time < Waveforms.endtime),
-                                   and_(query_time <= Waveforms.starttime, Waveforms.starttime < query_time + 30 * 60)),
-                               Waveforms.station.in_(select_sta),
-                               Waveforms.component.in_(select_comp)):
-                    print(matched_entry.ASDF_tag)
-
-                    # read in the data to obspy
-                    temp_st = read(os.path.join(matched_entry.path, matched_entry.waveform_basename))
-
-                    # modify network header
-                    temp_tr = temp_st[0]
-                    temp_tr.stats.network = matched_entry.new_network
-
-                    # st.append(temp_tr)
-                    st_dict[temp_tr.get_id()].append(temp_tr)
-
-
-            if os.path.splitext(self.db_filename)[1] == ".json":
-                # run python dictionary query
-                for key, matched_entry in self.network_dict.iteritems():
-                    if ((matched_entry['starttime'] <= query_time < matched_entry['endtime']) \
+            # run python dictionary query
+            for key, matched_entry in self.network_dict.iteritems():
+                    if ((matched_entry['starttime'] <= quake_time < matched_entry['endtime']) \
                                 or (
-                                query_time <= matched_entry['starttime'] and matched_entry['starttime'] < query_time + (
+                                quake_time <= matched_entry['starttime'] and matched_entry['starttime'] < query_time + (
                             30 * 60))) \
                             and ((matched_entry['station'] in select_sta) and (
                                 matched_entry['component'] in select_comp)):

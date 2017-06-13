@@ -20,22 +20,22 @@
      <verstretch>0</verstretch>
     </sizepolicy>
    </property>
-   <layout class="QGridLayout" name="gridLayout_3">
-    <item row="0" column="0">
-     <layout class="QGridLayout" name="gridLayout_2">
-      <item row="0" column="0">
+   <layout class="QVBoxLayout" name="verticalLayout_2">
+    <item>
+     <layout class="QVBoxLayout" name="verticalLayout">
+      <item>
        <layout class="QHBoxLayout" name="horizontalLayout">
-        <item>
-         <widget class="QPushButton" name="open_db_button">
-          <property name="text">
-           <string>Open Database file for Network</string>
-          </property>
-         </widget>
-        </item>
         <item>
          <widget class="QPushButton" name="open_ASDF_button">
           <property name="text">
            <string>Open ASDF file</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="open_db_button">
+          <property name="text">
+           <string>Open Database file for Network</string>
           </property>
          </widget>
         </item>
@@ -58,14 +58,20 @@
         </item>
        </layout>
       </item>
-      <item row="1" column="0">
-       <layout class="QVBoxLayout" name="verticalLayout">
-        <item>
-         <layout class="QGridLayout" name="gridLayout">
+      <item>
+       <widget class="QTabWidget" name="ds_tabWidget">
+        <property name="currentIndex">
+         <number>0</number>
+        </property>
+        <widget class="QWidget" name="main_ds_tab">
+         <attribute name="title">
+          <string>Main ASDF</string>
+         </attribute>
+         <layout class="QGridLayout" name="gridLayout_2">
           <item row="0" column="0">
-           <widget class="QTreeWidget" name="station_view">
+           <widget class="QTreeWidget" name="main_station_view">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+             <sizepolicy hsizetype="Maximum" vsizetype="Expanding">
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
@@ -87,7 +93,7 @@
            </widget>
           </item>
           <item row="0" column="1">
-           <widget class="QWebView" name="web_view">
+           <widget class="QWebView" name="main_web_view">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
               <horstretch>0</horstretch>
@@ -108,8 +114,69 @@
            </widget>
           </item>
          </layout>
-        </item>
-       </layout>
+         <zorder>template_station_view</zorder>
+         <zorder>template_web_view</zorder>
+         <zorder>template_station_view</zorder>
+         <zorder>main_station_view</zorder>
+         <zorder>main_web_view</zorder>
+        </widget>
+        <widget class="QWidget" name="template_tab">
+         <attribute name="title">
+          <string>template</string>
+         </attribute>
+         <layout class="QGridLayout" name="gridLayout_3">
+          <item row="0" column="0">
+           <layout class="QGridLayout" name="gridLayout">
+            <item row="2" column="0">
+             <widget class="QTreeWidget" name="template_station_view">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Expanding">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>500</width>
+                <height>16777215</height>
+               </size>
+              </property>
+              <property name="headerHidden">
+               <bool>true</bool>
+              </property>
+              <column>
+               <property name="text">
+                <string notr="true">1</string>
+               </property>
+              </column>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QWebView" name="template_web_view">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="baseSize">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="url">
+               <url>
+                <string>about:blank</string>
+               </url>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </widget>
       </item>
      </layout>
     </item>

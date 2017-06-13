@@ -11,6 +11,7 @@ import json
 import pyasdf
 import itertools
 
+from seisds import SeisDB
 from DateAxisItem import DateAxisItem
 
 import pandas as pd
@@ -309,21 +310,29 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.action_get_gaps_sql.triggered.connect(self.get_gaps_sql)
         self.action_plot_gaps_overlaps.triggered.connect(self.plot_gaps_overlaps)
 
-        self.station_view.itemClicked.connect(self.station_view_itemClicked)
+        # dictionary containing widget accessors for tabs. There will be an individual tab for each ASDF file
+        # created/read when querying events
+        self.tab_accessor = {"main": {"sta_tree": self.main_station_view, "web_view": self.main_web_view}}
 
-        cache = QtNetwork.QNetworkDiskCache()
-        cache.setCacheDirectory("cache")
-        self.web_view.page().networkAccessManager().setCache(cache)
-        self.web_view.page().networkAccessManager()
-
-        self.web_view.page().mainFrame().addToJavaScriptWindowObject("MainWindow", self)
-        self.web_view.page().setLinkDelegationPolicy(QtWebKit.QWebPage.DelegateAllLinks)
-        self.web_view.load(QtCore.QUrl('map.html'))
-        self.web_view.loadFinished.connect(self.onLoadFinished)
-        self.web_view.linkClicked.connect(QtGui.QDesktopServices.openUrl)
+        self.build_asdf_tab("main")
 
         self.show()
         self.raise_()
+
+    def build_asdf_tab(self, tab_id):
+        self.tab_accessor[tab_id]["sta_tree"].itemClicked.connect(self.station_view_itemClicked)
+
+        cache = QtNetwork.QNetworkDiskCache()
+        cache.setCacheDirectory("cache")
+        current_web_view = self.tab_accessor[tab_id]["web_view"]
+        current_web_view.page().networkAccessManager().setCache(cache)
+        current_web_view.page().networkAccessManager()
+
+        current_web_view.page().mainFrame().addToJavaScriptWindowObject("MainWindow", self)
+        current_web_view.page().setLinkDelegationPolicy(QtWebKit.QWebPage.DelegateAllLinks)
+        current_web_view.load(QtCore.QUrl('map.html'))
+        current_web_view.loadFinished.connect(self.onLoadFinished)
+        current_web_view.linkClicked.connect(QtGui.QDesktopServices.openUrl)
 
     def onLoadFinished(self):
         with open('map.js', 'r') as f:
@@ -345,26 +354,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         except AttributeError:
             pass
 
-    def open_db_file(self):
-        self.db_filename = str(QtGui.QFileDialog.getOpenFileName(
-            parent=self, caption="Choose JSON Database File",
-            directory=os.path.expanduser("~"),
-            filter="JSON Database File (*.json)"))
-        if not self.db_filename:
-            return
-
-        print('')
-        print("Initializing Metadata Database..")
-
-        with open(self.db_filename, 'r') as f:
-
-            # json_load = json.load(f)
-            self.network_dict = json.load(f)
-
-        print("JSON --> Dictionary Load Done!")
-
-            # self.network_dict = json.loads(json_load)
-
     def open_asdf_file(self):
         self.asdf_filename = str(QtGui.QFileDialog.getOpenFileName(
             parent=self, caption="Choose ASDF File",
@@ -374,13 +363,73 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             return
 
         # open up the asdf file containing all of the waveforms for a network
-        self.waveform_ds = pyasdf.ASDFDataSet(self.asdf_filename)
+        waveform_ds = pyasdf.ASDFDataSet(self.asdf_filename)
 
-        self.plot_stations()
+        self.table_accessor["main"]["ds"] = waveform_ds
 
-        self.build_station_view_list()
+        self.plot_stations("main")
 
-    def plot_stations(self):
+        self.build_station_tree_list("main")
+
+    def open_db_file(self):
+        self.db_filename = str(QtGui.QFileDialog.getOpenFileName(
+            parent=self, caption="Choose JSON Database File",
+            directory=os.path.expanduser(os.path.dirname(self.asdf_filename)),
+            filter="JSON Database File (*.json)"))
+        if not self.db_filename:
+            return
+
+        print('')
+        print("Initializing Database..")
+
+        # create the seismic database
+        seisdb = SeisDB(json_file=self.db_filename)
+
+        self.tab_accessor["main"]["db"] = seisdb
+
+        print("Seismic Database Initilized!")
+
+    def open_cat_file(self):
+        self.cat_filename = str(QtGui.QFileDialog.getOpenFileName(
+            parent=self, caption="Choose Earthquake Catalogue QuakeML File",
+            directory=os.path.expanduser("~"),
+            filter="XML Files (*.xml)"))
+        if not self.cat_filename:
+            return
+
+        cat = read_events(self.cat_filename)
+
+        # create empty data frame
+        cat_df = pd.DataFrame(data=None, columns=['event_id', 'qtime', 'lat', 'lon', 'depth', 'mag'])
+
+        # iterate through the events
+        for _i, event in enumerate(cat):
+            # Get quake origin info
+            origin_info = event.preferred_origin() or event.origins[0]
+
+            try:
+                mag_info = event.preferred_magnitude() or event.magnitudes[0]
+                magnitude = mag_info.mag
+            except IndexError:
+                # No magnitude for event
+                magnitude = None
+
+            cat_df.loc[_i] = [str(event.resource_id.id).split('=')[1], int(origin_info.time.timestamp),
+                                   origin_info.latitude, origin_info.longitude,
+                                   origin_info.depth / 1000, magnitude]
+
+        cat_df.reset_index(drop=True, inplace=True)
+
+        print('------------')
+        print(cat_df)
+
+        self.tab_accessor["main"]["cat"] = cat
+        self.tab_accessor["main"]["cat_df"] = cat_df
+
+        self.build_tables("main")
+        self.plot_events("main")
+
+    def plot_stations(self, tab):
         # save all of the coords for
         temp_x_coords = []
         temp_y_coords = []
@@ -400,81 +449,27 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             js_call = "addStation('{station_id}', {latitude}, {longitude});" \
                 .format(station_id=station_id, latitude=latitude,
                         longitude=longitude)
-            self.web_view.page().mainFrame().evaluateJavaScript(js_call)
+            self.main_web_view.page().mainFrame().evaluateJavaScript(js_call)
 
         self.station_coords = (temp_x_coords, temp_y_coords)
 
-    def open_cat_file(self):
-        self.cat_filename = str(QtGui.QFileDialog.getOpenFileName(
-            parent=self, caption="Choose Earthquake Catalogue QuakeML File",
-            directory=os.path.expanduser("~"),
-            filter="XML Files (*.xml)"))
-        if not self.cat_filename:
-            return
-
-        self.cat = read_events(self.cat_filename)
-
-        # create empty data frame
-        self.cat_df = pd.DataFrame(data=None, columns=['event_id', 'qtime', 'lat', 'lon', 'depth', 'mag'])
-
-        # iterate through the events
-        for _i, event in enumerate(self.cat):
-            # Get quake origin info
-            origin_info = event.preferred_origin() or event.origins[0]
-
-            try:
-                mag_info = event.preferred_magnitude() or event.magnitudes[0]
-                magnitude = mag_info.mag
-            except IndexError:
-                # No magnitude for event
-                magnitude = None
-
-            self.cat_df.loc[_i] = [str(event.resource_id.id).split('=')[1], int(origin_info.time.timestamp),
-                                   origin_info.latitude, origin_info.longitude,
-                                   origin_info.depth / 1000, magnitude]
-
-        self.cat_df.reset_index(drop=True, inplace=True)
-
-        print('------------')
-        print(self.cat_df)
-        self.build_tables()
-        self.plot_events()
-
-    # def open_xml_file(self):
-    #     self.stn_filename = str(QtGui.QFileDialog.getOpenFileName(
-    #         parent=self, caption="Choose StationXML Metadata File",
-    #         directory=os.path.expanduser("~"),
-    #         filter="XML Files (*.xml)"))
-    #     if not self.stn_filename:
-    #         return
-    #
-    #     self.inv = read_inventory(self.stn_filename)
-    #
-    #     print('')
-    #     print(self.inv)
-    #
-    #     self.channel_codes = []
-    #     # get the channel names for dataset
-    #     for _j, chan in enumerate(self.inv[0][0]):
-    #         self.channel_codes.append(self.inv[0][0][_j].code)
-    #
-    #     self.plot_inv()
-    #
-    #     self.build_station_view_list()
-
-    def build_station_view_list(self):
-        self.station_view.clear()
+    def build_station_tree_list(self, tab):
+        station_tree = self.tab_accessor[tab]['sta_tree']
+        ds = self.tab_accessor[tab]["ds"]
+        station_tree.clear()
 
         items = []
 
-        # persistent list for all stations within ASDF file
-        self.station_list = []
-        #set with unique channel codes in survey
-        channel_codes_set = set()
+        # persistent list for all stations within particular ASDF file
+        station_list = []
+
+        if tab == "main":
+            #set with unique channel codes in survey
+            channel_codes_set = set()
 
         # Iterate through station accessors in ASDF file
         for key, group in itertools.groupby(
-                self.waveform_ds.waveforms,
+                ds.waveforms,
                 key=lambda x: x._station_name.split(".")[0]):
             network_item = QtGui.QTreeWidgetItem(
                 [key],
@@ -507,8 +502,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
                 # add channel items
                 for channel_inv in station_inv:
-                    #add the channel code to list
-                    channel_codes_set.add(channel_inv.code)
+                    if tab == "main":
+                        #add the channel code to list
+                        channel_codes_set.add(channel_inv.code)
 
                     channel_item = QtGui.QTreeWidgetItem(
                         [channel_inv.code], type=STATION_VIEW_ITEM_TYPES["CHANNEL"])
@@ -540,11 +536,55 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
         items.append(network_item)
 
-        self.station_view.insertTopLevelItems(0, items)
+        station_tree.insertTopLevelItems(0, items)
 
-        # make the channel code set into list and make persistant
-        self.channel_codes = list(channel_codes_set)
+        if tab == "main":
+            # make the channel code set into list and make persistant
+            self.channel_codes = list(channel_codes_set)
 
+    def plot_events(self, tab):
+        web_view = self.tab_accessor[tab]["web_view"]
+        cat_df = self.tab_accessor[tab]["cat_df"]
+
+        # Plot the events
+        for row_index, row in cat_df.iterrows():
+            js_call = "addEvent('{event_id}', '{df_id}', {row_index}, " \
+                      "{latitude}, {longitude}, '{a_color}', '{p_color}');" \
+                .format(event_id=row['event_id'], df_id="cat", row_index=int(row_index), latitude=row['lat'],
+                        longitude=row['lon'], a_color="Red",
+                        p_color="#008000")
+            web_view.page().mainFrame().evaluateJavaScript(js_call)
+
+    def build_tables(self, tab):
+        cat_df = self.tab_accessor[tab]["cat_df"]
+
+        self.table_accessor = None
+
+        dropped_cat_df = cat_df
+
+        # make UTC string from earthquake cat and add julian day column
+        def mk_cat_UTC_str(row):
+            return (pd.Series([UTCDateTime(row['qtime']).ctime(), UTCDateTime(row['qtime']).julday]))
+
+        dropped_cat_df[['Q_time_str', 'julday']] = dropped_cat_df.apply(mk_cat_UTC_str, axis=1)
+
+        self.tbld = TableDialog(parent=self, cat_df=dropped_cat_df)
+
+        # if we are looking at the main ASDF dataset then add option to extract data
+        if tab == "main":
+            self.tbld.cat_event_table_view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.tbld.cat_event_table_view.customContextMenuRequested.connect(self.tbl_view_popup)
+
+        # Lookup Dictionary for table views
+        self.tbl_view_dict = {"cat": self.tbld.cat_event_table_view}
+
+        # Create a new table_accessor dictionary for this class
+        self.table_accessor = {self.tbld.cat_event_table_view: [dropped_cat_df, range(0, len(dropped_cat_df))]}
+
+        self.tbld.cat_event_table_view.clicked.connect(self.table_view_clicked)
+
+        # If headers are clicked then sort
+        self.tbld.cat_event_table_view.horizontalHeader().sectionClicked.connect(self.headerClicked)
 
     def station_view_itemClicked(self, item):
         t = item.type()
@@ -579,34 +619,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             self.create_SG2K_initiate, self.selected_row['event_id'], self.selected_row))
 
         self.rc_menu.popup(QtGui.QCursor.pos())
-
-    def build_tables(self):
-
-        self.table_accessor = None
-
-        dropped_cat_df = self.cat_df
-
-        # make UTC string from earthquake cat and add julian day column
-        def mk_cat_UTC_str(row):
-            return (pd.Series([UTCDateTime(row['qtime']).ctime(), UTCDateTime(row['qtime']).julday]))
-
-        dropped_cat_df[['Q_time_str', 'julday']] = dropped_cat_df.apply(mk_cat_UTC_str, axis=1)
-
-        self.tbld = TableDialog(parent=self, cat_df=dropped_cat_df)
-
-        self.tbld.cat_event_table_view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.tbld.cat_event_table_view.customContextMenuRequested.connect(self.tbl_view_popup)
-
-        # Lookup Dictionary for table views
-        self.tbl_view_dict = {"cat": self.tbld.cat_event_table_view}
-
-        # Create a new table_accessor dictionary for this class
-        self.table_accessor = {self.tbld.cat_event_table_view: [dropped_cat_df, range(0, len(dropped_cat_df))]}
-
-        self.tbld.cat_event_table_view.clicked.connect(self.table_view_clicked)
-
-        # If headers are clicked then sort
-        self.tbld.cat_event_table_view.horizontalHeader().sectionClicked.connect(self.headerClicked)
 
     def headerClicked(self, logicalIndex):
         focus_widget = QtGui.QApplication.focusWidget()
@@ -646,16 +658,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             js_call = "highlightEvent('{event_id}');".format(event_id=self.selected_row['event_id'])
             self.web_view.page().mainFrame().evaluateJavaScript(js_call)
 
-    def plot_events(self):
-        # Plot the events
-        for row_index, row in self.cat_df.iterrows():
-            js_call = "addEvent('{event_id}', '{df_id}', {row_index}, " \
-                      "{latitude}, {longitude}, '{a_color}', '{p_color}');" \
-                .format(event_id=row['event_id'], df_id="cat", row_index=int(row_index), latitude=row['lat'],
-                        longitude=row['lon'], a_color="Red",
-                        p_color="#008000")
-            self.web_view.page().mainFrame().evaluateJavaScript(js_call)
-
     # def plot_inv(self):
     #     # plot the stations
     #     temp_x_coords = []
@@ -680,13 +682,13 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             select_sta, select_comp = sel_dlg.getSelected()
             print(select_sta)
 
-            # specify output directory for ASDF file for earthquake
-            temp_asdf_out = os.path.join(os.path.dirname(self.cat_filename), event + '.h5')
+            # specify output directory for miniSEED files
+            temp_seed_out = os.path.join(os.path.dirname(self.cat_filename), event)
 
             # create directory
-            if os.path.exists(temp_asdf_out):
-                shutil.rmtree(temp_asdf_out)
-            os.mkdir(temp_asdf_out)
+            if os.path.exists(temp_seed_out):
+                shutil.rmtree(temp_seed_out)
+            os.mkdir(temp_seed_out)
 
             # earthquake time for json query
             quake_time = UTCDateTime(quake_df['qtime']).timestamp
@@ -703,28 +705,22 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             print('---------------------------------------')
             print('Finding Data for Earthquake: ' + event)
 
-            # run python dictionary query
-            for key, matched_entry in self.network_dict.iteritems():
-                    if ((matched_entry['starttime'] <= quake_time < matched_entry['endtime']) \
-                                or (
-                                quake_time <= matched_entry['starttime'] and matched_entry['starttime'] < query_time + (
-                            30 * 60))) \
-                            and ((matched_entry['station'] in select_sta) and (
-                                matched_entry['component'] in select_comp)):
-                        print(matched_entry['ASDF_tag']) #, os.path.join(matched_entry['path'], key))
+            query = self.seisdb.queryByTime(select_sta, select_comp, qu_starttime, qu_endtime)
 
-                        # read in the data to obspy
-                        temp_st = read(os.path.join(matched_entry['path'], key))
+            for matched_info in query.values():
+                print(matched_info["ASDF_tag"])
 
-                        # modify network header
-                        temp_tr = temp_st[0]
-                        temp_tr.stats.network = matched_entry['new_network']
+                # get the data from the ASDF file
+                sta_accessor  = self.waveform_ds[matched_info["new_network"] + '.' + matched_info["new_station"]]
 
-                        # trim trace to start and endtime
-                        temp_tr.trim(starttime=trace_starttime, endtime=trace_endtime)
+                # read the data from ASDF into stream
+                temp_tr = sta_accessor[matched_info["ASDF_tag"]][0]
 
-                        # st.append(temp_tr)
-                        st_dict[temp_tr.get_id()].append(temp_tr)
+                # trim trace to start and endtime
+                temp_tr.trim(starttime=qu_starttime, endtime=qu_endtime)
+
+                # st.append(temp_tr)
+                st_dict[temp_tr.get_id()].append(temp_tr)
 
             # free memory
             temp_st = None

@@ -154,6 +154,12 @@ function resetMarkerSize() {
     });
 }
 
+function removeEventMarkers() {
+    _.forEach(events, function(value, key) {
+        value.marker.removeMarker();
+    });
+}
+
 
 if(typeof MainWindow != 'undefined') {
     function circleClick(e) {
@@ -215,6 +221,13 @@ function highlightRefStation(station_id) {
     var value = ref_stations[station_id];
     setStnMarkerActive(value)
 }
+
+function removeStnMarkers() {
+    _.forEach(stations, function(value, key) {
+        map.removeMarker(value.marker);
+    });
+}
+
 
 //function stationClick(e) {
 //        var clickedStn = e.target;

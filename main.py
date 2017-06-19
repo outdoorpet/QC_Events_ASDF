@@ -336,6 +336,8 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
     @QtCore.pyqtSlot(float, float, str, str, int)
     def onMap_marker_selected(self, lat, lng, event_id, df_id, row_index):
+        self.selected_file = os.path.basename(self.root_asdf_filename)
+        self.station_view_itemClicked(self.ASDF_accessor[self.selected_file]['file_tree_item'])
         self.table_view_highlight(self.tbl_view_dict[str(df_id)], row_index)
 
     @QtCore.pyqtSlot(int)
@@ -513,12 +515,13 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
                 # get stationxml (to channel level) for station
                 station_inv = station.StationXML[0][0]
+                print(station_inv)
 
                 # add info children
                 station_children = [
-                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.creation_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                           type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.termination_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                           type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
                     QtGui.QTreeWidgetItem(['Latitude: \t%s' % station_inv.latitude], type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
                     QtGui.QTreeWidgetItem(['Longitude: \t%s' % station_inv.longitude],
@@ -537,9 +540,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                         [channel_inv.code], type=STATION_VIEW_ITEM_TYPES["CHANNEL"])
 
                     channel_children = [
-                        QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                        QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.creation_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                               type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
-                        QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                        QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.termination_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                               type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
                         QtGui.QTreeWidgetItem(['Location: \t%s' % channel_inv.location_code],
                                               type=STATION_VIEW_ITEM_TYPES["CHAN_INFO"]),
@@ -669,6 +672,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         focus_widget.update()
 
     def table_view_clicked(self):
+        self.selected_file = os.path.basename(self.root_asdf_filename)
+        self.station_view_itemClicked(self.ASDF_accessor[self.selected_file]['file_tree_item'])
+
         focus_widget = QtGui.QApplication.focusWidget()
         row_number = focus_widget.selectionModel().selectedRows()[0].row()
         row_index = self.table_accessor[focus_widget][1][row_number]
@@ -715,8 +721,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             # create directory
             if os.path.exists(path_asdf):
                 shutil.rmtree(path_asdf, ignore_errors=True)
-            else:
-                os.mkdir(path_asdf)
+
+            os.mkdir(path_asdf)
+
+            # open up the ASDF file
+            query_ds = pyasdf.ASDFDataSet(temp_ASDF_out)
 
             # earthquake time for json query
             quake_time = UTCDateTime(quake_df['qtime']).timestamp
@@ -758,6 +767,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                 # add the associated inv into another dict
                 inv_dict[matched_info["new_network"] + '.' + matched_info["new_station"]] = inv
 
+            waveforms_added = False
 
             # free memory
             temp_st = None
@@ -787,14 +797,16 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                     st_dict[key] = st_dict[key].trim(starttime=UTCDateTime(qu_starttime),
                                                      endtime=UTCDateTime(qu_endtime), pad=True, fill_value=0)
 
-                # open up the ASDF file
-                query_ds = pyasdf.ASDFDataSet(temp_ASDF_out)
+
+
+
 
                 # write traces into ASDF
                 query_ds.add_quakeml(cat_single)
                 for key in inv_dict.keys():
                     query_ds.add_stationxml(inv_dict[key])
                 for key in st_dict.keys():
+                    waveforms_added = True
                     query_ds.add_waveforms(st_dict[key], tag="extracted_event", event_id=cat_single)
                     st_dict[key].write(os.path.join(path_asdf, st_dict[key].get_id() + ".MSEED"), format="MSEED")
                     # if type(st_dict[key]) == Stream:
@@ -812,10 +824,10 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             # free memory
             st_dict = None
 
-
+            ref_stations = []
             # Now requesting reference station data from IRIS if desired
             if self.ref_radioButton.isChecked():
-                ref_stations = []
+
                 ref_dir = os.path.join(path_asdf, 'ref_data')
 
                 # create ref directory
@@ -878,6 +890,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                 for st_inv in inv:
                     query_ds.add_stationxml(st_inv)
                 for tr in ref_st:
+                    waveforms_added = True
                     query_ds.add_waveforms(tr, "reference_station", event_id=cat_single)
                     tr.write(os.path.join(ref_dir, tr.id + ".MSEED"), format="MSEED")
                 print("Wrote Reference Waveforms to ASDF file: " + temp_ASDF_out)
@@ -885,10 +898,14 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
                 ref_inv.write(os.path.join(ref_dir, "ref_metadata.xml"), format="STATIONXML")
 
-            # now add the asdf file into view
-            self.ASDF_accessor[os.path.basename(temp_ASDF_out)] = {"ds": query_ds, "ref_stns": ref_stations}
+            if waveforms_added:
+                # now add the asdf file into view
+                self.ASDF_accessor[os.path.basename(temp_ASDF_out)] = {"ds": query_ds, "ref_stns": ref_stations}
 
-            self.build_station_view_list(os.path.basename(temp_ASDF_out))
+                self.build_station_view_list(os.path.basename(temp_ASDF_out))
+
+            else:
+                del query_ds
 
     def upd_xml_sql(self):
         # Look at the SQL database and create dictionary for start and end dates for each station

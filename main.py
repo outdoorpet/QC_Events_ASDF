@@ -711,8 +711,8 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         sel_dlg = selectionDialog(parent=self, sta_list=sta_list, chan_list=chan_list)
         if sel_dlg.exec_():
             select_sta, select_comp = sel_dlg.getSelected()
-            print(select_sta)
-            print(select_comp)
+            # print(select_sta)
+            # print(select_comp)
 
             path_asdf = os.path.join(os.path.dirname(self.cat_filename), event)
             # specify output ASDF

@@ -519,9 +519,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
                 # add info children
                 station_children = [
-                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.creation_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                    QtGui.QTreeWidgetItem(['StartDate: \t%s' % station_inv.start_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                           type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
-                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.termination_date.strftime('%Y-%m-%dT%H:%M:%S')],
+                    QtGui.QTreeWidgetItem(['EndDate: \t%s' % station_inv.end_date.strftime('%Y-%m-%dT%H:%M:%S')],
                                           type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
                     QtGui.QTreeWidgetItem(['Latitude: \t%s' % station_inv.latitude], type=STATION_VIEW_ITEM_TYPES["STN_INFO"]),
                     QtGui.QTreeWidgetItem(['Longitude: \t%s' % station_inv.longitude],

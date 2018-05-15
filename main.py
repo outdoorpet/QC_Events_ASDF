@@ -743,7 +743,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             print('---------------------------------------')
             print('Finding Data for Earthquake: ' + event)
 
-            query = self.seisdb.queryByTime(select_sta, select_comp, qu_starttime, qu_endtime)
+
+            print([select_sta.split(".")[0]], [select_sta.split(".")[1]], [select_comp], ["raw_recording"], qu_starttime, qu_endtime)
+            query = self.seisdb.queryByTime([select_sta.split(".")[0]], [select_sta.split(".")[1]], [select_comp], ["raw_recording"], qu_starttime, qu_endtime)
 
             for matched_info in query.values():
                 print(matched_info["ASDF_tag"])

@@ -40,6 +40,14 @@ class SeisDB(object):
                 for _i, (key, value) in enumerate(self._json_dict.iteritems()):
                     self._indexed_dict[_i] = key
                     temp_list = []
+
+                    # get ASDF tag
+                    tag = key.split('__')[3]
+
+                    temp_list.append(tag)
+                    if not dtype_pop:
+                        type_list.append(('tag', 'S100'))
+
                     for _j, (sub_key, sub_value) in enumerate(value.iteritems()):
                         # only add some of the attributes to the numpy array to speed up lookup
                         if sub_key == "tr_starttime":
@@ -71,8 +79,9 @@ class SeisDB(object):
 
                     self._index_dict_list.append(tuple(temp_list))
 
-                dt = np.dtype(type_list)
-                self._indexed_np_array = np.array(self._index_dict_list, dtype=dt)
+                self.dt = np.dtype(type_list)
+                self._indexed_np_array = np.array(self._index_dict_list, dtype=self.dt)
+                print(self._indexed_np_array)
                 self._use_numpy_index = True
                 self._valid_index = True
 
@@ -101,7 +110,7 @@ class SeisDB(object):
             except KeyError as e:
                 print "Indexing JSON dictionary has failed with a key error({0}): {1}".format(e.errorno, e.strerror)
 
-    def queryByTime(self, sta, chan, query_starttime, query_endtime):
+    def queryByTime(self, net, sta, chan, tags, query_starttime, query_endtime):
         qs = query_starttime
         qe = query_endtime
         assert self._json_loaded, "Invalid SeisDB object. Try loading a valid JSON file first."
@@ -109,10 +118,16 @@ class SeisDB(object):
         if not self._use_numpy_index:
             indices = []
             for _i, key in enumerate(self._formatted_dict.keys()):
+                # check if tag matches
+                # get ASDF tag
+                tag = key.split('__')[3]
+                if not tag in tags:
+                    continue
                 matched_entry = self._formatted_dict[key]
                 if ((matched_entry['tr_starttime'] <= qs < matched_entry['tr_endtime'])
                     or (qs <= matched_entry['tr_starttime'] and matched_entry['tr_starttime'] < qe)) \
-                        and ((matched_entry['new_station'] in sta) and (matched_entry['new_channel'] in chan)):
+                        and ((matched_entry['new_network'] in net) and (matched_entry['new_station'] in sta) and (
+                                    matched_entry['new_channel'] in chan)):
                     indices.append(_i)
             # indices_array = np.array(indices)
             # Print output
@@ -126,11 +141,12 @@ class SeisDB(object):
                         "new_network": self._formatted_dict[k]["new_network"]}
                     for k in indices}
         else:
-            _indexed_np_array_masked = np.where((np.in1d(self._indexed_np_array['sta'], sta))
-                           & (np.in1d(self._indexed_np_array['cha'], chan))
-                           & np.logical_or(np.logical_and(self._indexed_np_array['st'] <= qs,  qs < self._indexed_np_array['et']),
-                                           (np.logical_and(qs <= self._indexed_np_array['st'],
-                                                           self._indexed_np_array['st'] < qe))))
+            _indexed_np_array_masked = np.where(
+                (np.in1d(self._indexed_np_array['net'], net)) & (np.in1d(self._indexed_np_array['sta'], sta))
+                & (np.in1d(self._indexed_np_array['cha'], chan)) & (np.in1d(self._indexed_np_array['tag'], tags))
+                & np.logical_or(np.logical_and(self._indexed_np_array['st'] <= qs, qs < self._indexed_np_array['et']),
+                                (np.logical_and(qs <= self._indexed_np_array['st'],
+                                                self._indexed_np_array['st'] < qe))))
             # print(_indexed_np_array_masked[0])
             # for index in _indexed_np_array_masked[0]:
             #    print(self._indexed_np_array[index, 6])
@@ -141,6 +157,166 @@ class SeisDB(object):
                         "new_station": self._indexed_np_array['sta'][k],
                         "new_network": self._indexed_np_array['net'][k]}
                     for k in _indexed_np_array_masked[0]}
+
+    def get_recording_intervals(self, net, sta, chan, tags):
+        # print(self._indexed_np_array)
+        print(net,sta,chan,tags)
+        _indexed_np_array_masked = np.where(
+            (np.in1d(self._indexed_np_array['net'], net)) & (np.in1d(self._indexed_np_array['sta'], sta)) & (
+                np.in1d(self._indexed_np_array['cha'], chan)) & (np.in1d(self._indexed_np_array['tag'], tags)))
+
+        _masked_np_array = self._indexed_np_array[_indexed_np_array_masked]
+
+        _st_array = _masked_np_array["st"]
+        _et_array = _masked_np_array["et"]
+
+        _arg_sorted_st_array = np.argsort(_st_array)
+
+        _sorted_st_array = _st_array[_arg_sorted_st_array]
+        _sorted_et_array = _et_array[_arg_sorted_st_array]
+
+        print(_sorted_st_array)
+        print(_sorted_et_array)
+
+        if _sorted_st_array.shape[0] == 1:
+            #i.e. there are no gaps
+            print(_sorted_st_array[0])
+            return (np.array([[_sorted_st_array[0]], [_sorted_et_array[0]]]))
+
+
+        # offset the starttime array so that we start from the second recorded waveform
+        _offset_st_array = _sorted_st_array[1:]
+
+        print(_offset_st_array)
+
+        _diff_array = _offset_st_array - _sorted_et_array[:-1]
+
+        print(_diff_array)
+
+        # now get indexes when gap (diff positive) or overlap (diff negative)
+        # remember to add 1 to index because of offset
+        _sorted_gaps_index = np.where(_diff_array > 1)
+
+        print(_sorted_gaps_index)
+
+        # if it is empty then the gaps are smaller than 1 second ignore them
+        if _sorted_gaps_index[0].shape[0]==0:
+            return (np.array([[_sorted_st_array[0]], [_sorted_et_array[-1]]]))
+
+
+
+        # recording intervals:
+        # rec_start_list_after gaps = list(_sorted_st_array[_sorted_gaps_index])
+        rec_end_list_after_gaps = list(_sorted_et_array[_sorted_gaps_index])
+
+        print(rec_end_list_after_gaps)
+
+
+        rec_start_list =[]
+        rec_end_list =[]
+
+        int_id = 0
+        for _i in range(len(rec_end_list_after_gaps)):
+            rec_start_list.append(_sorted_st_array[int_id])
+            rec_end_list.append(rec_end_list_after_gaps[_i])
+            int_id = _sorted_gaps_index[0][_i] + 1
+            if _i == len(rec_end_list_after_gaps) - 1:
+                # last interval
+                # print(_sorted_st_array[int_id], _sorted_et_array[-1])
+                rec_start_list.append(_sorted_st_array[int_id])
+                rec_end_list.append(_sorted_et_array[-1])
+
+        return (np.array([rec_start_list, rec_end_list]))
+
+    def get_gaps_intervals(self, net, sta, chan, tags):
+
+        # print(self._indexed_np_array)
+        _indexed_np_array_masked = np.where(
+            (np.in1d(self._indexed_np_array['net'], net)) & (np.in1d(self._indexed_np_array['sta'], sta)) & (
+            np.in1d(self._indexed_np_array['cha'], chan)) & (np.in1d(self._indexed_np_array['tag'], tags)))
+        # print(_indexed_np_array_masked)
+
+        _masked_np_array = self._indexed_np_array[_indexed_np_array_masked]
+        # print(_masked_np_array)
+
+        # print(np.sort(_masked_np_array, order='st'))
+
+        _st_array = _masked_np_array["st"]
+        _et_array = _masked_np_array["et"]
+
+        # print(_st_array)
+
+        _arg_sorted_st_array = np.argsort(_st_array)
+
+        _sorted_st_array = _st_array[_arg_sorted_st_array]
+        _sorted_et_array = _et_array[_arg_sorted_st_array]
+
+        # print(_arg_sorted_st_array)
+        # print(_sorted_st_array)
+        # print(_sorted_et_array)
+
+        # offset the starttime array so that we start from the second recorded waveform
+        _offset_st_array = _sorted_st_array[1:]
+
+        # print(_offset_st_array)
+
+        _diff_array = _offset_st_array - _sorted_et_array[:-1]
+
+        # print(_diff_array)
+
+        # now get indexes when gap (diff positive) or overlap (diff negative)
+        # remember to add 1 to index because of offset
+        _sorted_gaps_index = np.where(_diff_array > 1)
+        # _sorted_ovlps_index = np.where(_diff_array < 1)
+
+        # print(_sorted_gaps_index)
+
+        # now get the gap_starttimes and gap endtimes
+        gaps_start_list = list(_sorted_et_array[_sorted_gaps_index])
+        gaps_end_list = list(_offset_st_array[_sorted_gaps_index])
+
+        return (np.array([gaps_start_list, gaps_end_list]))
+
+    def get_unique_information(self):
+        """
+        Method to retreive the unique channels and tags within an ASDF file from the JSON Database
+        :return: (unique channels, unique tags)
+        """
+        assert self._json_loaded, "Invalid SeisDB object. Try loading a valid JSON file first."
+        assert self._valid_index, "Invalid SeisDB object. Index has not been generated."
+        if not self._use_numpy_index:
+            print("Must be using Numpy index")
+
+        else:
+            return (np.unique(self._indexed_np_array['cha']), np.unique(self._indexed_np_array['tag']))
+
+    def retrieve_full_db_entry(self, json_key):
+        """
+        Method to take an output from queryByTime and get the full information from the original JSON db
+        :return: full DB
+        """
+
+        # for
+        # print(self._json_dict[json_key])
+        return (self._json_dict[json_key])
+
+    def is_chan_related(self, chan, net, sta, loc):
+        """
+        Method to test if a channel code is related to a given net/stn/tag/loc
+        :param chan: Channel Code, String
+        :param net: Network Code, String
+        :param sta: Station Code, String
+        :param sta: Location Code, String
+        :return: True/False, Bool
+        """
+        _indexed_np_array_masked = np.where(
+            (np.in1d(self._indexed_np_array['net'], net)) & (np.in1d(self._indexed_np_array['sta'], sta))
+            & (np.in1d(self._indexed_np_array['cha'], chan)) & (np.in1d(self._indexed_np_array['loc'], loc)))
+
+        _masked_np_array = self._indexed_np_array[_indexed_np_array_masked]
+
+        # returns true if there are traces in ASDF with chanel relating, or false otherwise
+        return(bool(_masked_np_array.size))
 
 
 if __name__ == "__main__":

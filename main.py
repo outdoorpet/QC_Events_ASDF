@@ -114,11 +114,13 @@ class selectionDialog(QtGui.QDialog):
             self.selui.check_all.setCheckState(QtCore.Qt.Unchecked)
 
     def getSelected(self):
+        select_networks = set()
         select_stations = []
         select_channels = []
         i = 0
         while self.sta_model.item(i):
             if self.sta_model.item(i).checkState():
+                select_networks.add(str(self.sta_model.item(i).text()).split('.')[0])
                 select_stations.append(str(self.sta_model.item(i).text()).split('.')[1])
             i += 1
         i = 0
@@ -128,7 +130,7 @@ class selectionDialog(QtGui.QDialog):
             i += 1
 
         # Return Selected stations and selected channels
-        return (select_stations, select_channels)
+        return (list(select_networks), select_stations, select_channels)
 
 
 class PandasModel(QtCore.QAbstractTableModel):
@@ -710,11 +712,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         # Launch the custom station/component selection dialog
         sel_dlg = selectionDialog(parent=self, sta_list=sta_list, chan_list=chan_list)
         if sel_dlg.exec_():
-            select_sta, select_comp = sel_dlg.getSelected()
+            select_net, select_sta, select_comp = sel_dlg.getSelected()
             # print(select_sta)
             # print(select_comp)
 
-            path_asdf = os.path.join(os.path.dirname(self.cat_filename), event)
+            path_asdf = os.path.join(os.path.dirname(self.cat_filename), event+"ashby_test")
             # specify output ASDF
             temp_ASDF_out = os.path.join(path_asdf, event + '.h5')
 
@@ -722,7 +724,10 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             if os.path.exists(path_asdf):
                 shutil.rmtree(path_asdf, ignore_errors=True)
 
-            os.mkdir(path_asdf)
+            try:
+                os.mkdir(path_asdf)
+            except:
+                pass
 
             # open up the ASDF file
             query_ds = pyasdf.ASDFDataSet(temp_ASDF_out)
@@ -744,9 +749,12 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             print('Finding Data for Earthquake: ' + event)
 
 
-            print([select_sta.split(".")[0]], [select_sta.split(".")[1]], [select_comp], ["raw_recording"], qu_starttime, qu_endtime)
-            query = self.seisdb.queryByTime([select_sta.split(".")[0]], [select_sta.split(".")[1]], [select_comp], ["raw_recording"], qu_starttime, qu_endtime)
+            select_tags = ["raw_recording"]
 
+
+
+            print(select_net, select_sta, select_comp, select_tags, qu_starttime, qu_endtime)
+            query = self.seisdb.queryByTime(select_net, select_sta, select_comp, select_tags, qu_starttime, qu_endtime)
             for matched_info in query.values():
                 print(matched_info["ASDF_tag"])
 
@@ -758,6 +766,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
                 # read the data from the root ASDF into stream
                 temp_tr = sta_accessor[matched_info["ASDF_tag"]][0]
+
+                print(temp_tr)
+                temp_tr.plot()
 
 
                 # trim trace to start and endtime
@@ -784,8 +795,18 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
                 # st.merge()
 
                 for key in st_dict.keys():
-                    print("Station {0} has {1} Seconds of data".format(key, st_dict[key][0].stats.endtime - st_dict[key][0].stats.starttime))
-                    st_dict[key] = st_dict[key][0]
+                    merged_st = Stream()
+                    for temp_tr in st_dict[key]:
+                        merged_st.append(temp_tr)
+                        temp_tr = None
+                    merged_st.merge()
+
+                    st_dict[key] = merged_st[0]
+
+
+                    print("Station {0} has {1} Seconds of data".format(key, merged_st[0].stats.endtime - merged_st[0].stats.starttime))
+
+                    merged_st = None
 
 
                 print('\nTrimming Traces to 20 mins around earthquake time....')

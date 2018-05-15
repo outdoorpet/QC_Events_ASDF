@@ -716,7 +716,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             # print(select_sta)
             # print(select_comp)
 
-            path_asdf = os.path.join(os.path.dirname(self.cat_filename), event+"ashby_test")
+            path_asdf = os.path.join(os.path.dirname(self.cat_filename), event)
             # specify output ASDF
             temp_ASDF_out = os.path.join(path_asdf, event + '.h5')
 
